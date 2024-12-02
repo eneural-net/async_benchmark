@@ -6,7 +6,7 @@ void main() async {
   final profile =
       BenchmarkProfile('custom', warmup: 10, interactions: 100, rounds: 3);
 
-  await BenchmarkPrime(seed: 12345).run(profile: profile);
+  await BenchmarkPrime(seed: 12345).run(profile: profile, verbose: true);
 }
 
 class BenchmarkPrime extends Benchmark<int, Prime> {

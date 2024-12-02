@@ -14,7 +14,7 @@ void main() async {
     BenchmarkPrime(seed: seed),
   ];
 
-  await benchmarks.runAll(profile: profile);
+  await benchmarks.runAll(profile: profile, verbose: true);
 }
 
 class BenchmarkPrimeCached extends Benchmark<int, PrimeCached> {
