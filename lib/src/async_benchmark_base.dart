@@ -6,7 +6,9 @@ typedef BenchmarkOnIsolateSetup<S> = ({
   Future<void> Function() shutdown
 });
 
-class BenchmarkOnIsolate<S, O, B extends Benchmark<S, O>>
+/// A class that runs benchmarks on an [Isolate], extending the [Benchmark] class.
+/// This class encapsulates setup, job execution, teardown, and shutdown
+/// of benchmarks executed on a separate [Isolate].
 class _BenchmarkOnIsolate<S, O, B extends Benchmark<S, O>>
     extends Benchmark<BenchmarkOnIsolateSetup<S>, O> {
   final B benchmark;
