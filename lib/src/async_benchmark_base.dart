@@ -360,7 +360,7 @@ Future<BenchmarkResult<S, O, B>> benchmark<S, O, B extends Benchmark<S, O>>(
 }) async {
   if (setupOnIsolate) {
     var result = await _benchmarkImpl(
-      BenchmarkOnIsolate<S, O, B>(benchmark),
+      _BenchmarkOnIsolate<S, O, B>(benchmark),
       profile: profile,
       warmup: warmup,
       interactions: interactions,
