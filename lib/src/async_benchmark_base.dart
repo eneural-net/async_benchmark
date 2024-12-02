@@ -7,14 +7,15 @@ typedef BenchmarkOnIsolateSetup<S> = ({
 });
 
 class BenchmarkOnIsolate<S, O, B extends Benchmark<S, O>>
+class _BenchmarkOnIsolate<S, O, B extends Benchmark<S, O>>
     extends Benchmark<BenchmarkOnIsolateSetup<S>, O> {
   final B benchmark;
 
-  BenchmarkOnIsolate(this.benchmark) : super(benchmark.title);
+  _BenchmarkOnIsolate(this.benchmark) : super(benchmark.title);
 
   @override
   Future<BenchmarkSetupResult<BenchmarkOnIsolateSetup<S>, O>> setup() async {
-    var r = await runSetupOnIsolate(benchmark);
+    var r = await _runSetupOnIsolate(benchmark);
     return (setup: r, service: null);
   }
 
@@ -33,11 +34,12 @@ class BenchmarkOnIsolate<S, O, B extends Benchmark<S, O>>
       benchmark.teardown(setup.setup, service);
 
   static Future<BenchmarkOnIsolateSetup<S>> runSetupOnIsolate<S, O>(
+  static Future<BenchmarkOnIsolateSetup<S>> _runSetupOnIsolate<S, O>(
       Benchmark<S, O> benchmark) async {
     final receivePort = ReceivePort();
 
     var isolate = await Isolate.spawn(
-      isolateSetup,
+      _isolateRunSetup,
       (receivePort.sendPort, benchmark),
       debugName: '${benchmark.runtimeType}[${benchmark.title}]',
     );
@@ -71,6 +73,7 @@ class BenchmarkOnIsolate<S, O, B extends Benchmark<S, O>>
   }
 
   static void isolateSetup((SendPort, Benchmark) args) async {
+  static void _isolateRunSetup((SendPort, Benchmark) args) async {
     final sendPort = args.$1;
     final benchmark = args.$2;
 
