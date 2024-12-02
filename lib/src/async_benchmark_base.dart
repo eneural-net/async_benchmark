@@ -35,7 +35,8 @@ class _BenchmarkOnIsolate<S, O, B extends Benchmark<S, O>>
   FutureOr<void> teardown(BenchmarkOnIsolateSetup<S> setup, O? service) =>
       benchmark.teardown(setup.setup, service);
 
-  static Future<BenchmarkOnIsolateSetup<S>> runSetupOnIsolate<S, O>(
+  /// Runs the setup of the benchmark on a separate [Isolate].
+  /// Returns a [BenchmarkOnIsolateSetup] containing setup data and shutdown function.
   static Future<BenchmarkOnIsolateSetup<S>> _runSetupOnIsolate<S, O>(
       Benchmark<S, O> benchmark) async {
     final receivePort = ReceivePort();
@@ -74,7 +75,7 @@ class _BenchmarkOnIsolate<S, O, B extends Benchmark<S, O>>
     return (setup: setup, shutdown: shutdown);
   }
 
-  static void isolateSetup((SendPort, Benchmark) args) async {
+  /// Runs the benchmark setup in an [Isolate].
   static void _isolateRunSetup((SendPort, Benchmark) args) async {
     final sendPort = args.$1;
     final benchmark = args.$2;
