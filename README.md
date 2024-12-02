@@ -81,6 +81,55 @@ class Prime {
 }
 ```
 
+OUTPUT:
+
+```text
+╔═══════════════════════════╗
+║ PrimeCounter(seed: 12345) ║
+╠═══════════════════════════╝
+║ BenchmarkProfile[custom]{warmup: 10, interactions: 100, rounds: 3}
+╠────────────────────────────
+║ Setup...
+║ ─ (service: Prime{}, setup: 155253)
+║ Warmup (10)...
+╠────────────────────────────
+║ ROUND: 1/3
+║
+║ ─ Running (100)...
+║ ─ Teardown...
+║
+║ »» Duration: 0:00:01.356317
+║ »» Speed: 73.7291 Hz
+║ »» Interaction Time: 13.563 ms
+╠────────────────────────────
+║ ROUND: 2/3
+║
+║ ─ Running (100)...
+║ ─ Teardown...
+║
+║ »» Duration: 0:00:01.352660
+║ »» Speed: 73.9284 Hz
+║ »» Interaction Time: 13.527 ms
+╠────────────────────────────
+║ ROUND: 3/3
+║
+║ ─ Running (100)...
+║ ─ Teardown...
+║
+║ »» Duration: 0:00:01.359452
+║ »» Speed: 73.5591 Hz
+║ »» Interaction Time: 13.595 ms
+╠────────────────────────────
+║ BEST ROUND: 2
+║
+║ »» Duration: 0:00:01.352660
+║ »» Speed: 73.9284 Hz
+║ »» Interaction Time: 13.527 ms
+╠────────────────────────────
+║ Shutdown...
+╚════════════════════════════
+```
+
 ## Source
 
 The official source code is [hosted @ GitHub][github_async_benchmark]:
