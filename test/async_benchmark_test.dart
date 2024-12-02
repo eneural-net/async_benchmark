@@ -8,7 +8,8 @@ void main() {
     test('fast', () async {
       var bench = BenchmarkPrime();
 
-      var results = await bench.run(profile: BenchmarkProfile.fast);
+      var results =
+          await bench.run(profile: BenchmarkProfile.fast, verbose: true);
 
       var rounds = results.rounds;
 
