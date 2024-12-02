@@ -15,7 +15,13 @@ class _BenchmarkOnIsolate<S, O, B extends Benchmark<S, O>>
   /// The benchmark instance that this class is managing.
   final B benchmark;
 
-  _BenchmarkOnIsolate(this.benchmark) : super(benchmark.title);
+  /// An optional additional delay to wait after [Isolate] shutdown.
+  /// Useful if system resources require time to synchronize with
+  /// Dart's shutdown operations.
+  final Duration? shutdownIsolateDelay;
+
+  _BenchmarkOnIsolate(this.benchmark, {this.shutdownIsolateDelay})
+      : super(benchmark.title);
 
   /// Sets up the benchmark on the [Isolate], returning a [BenchmarkSetupResult]
   /// containing setup data and service information.
@@ -31,6 +37,11 @@ class _BenchmarkOnIsolate<S, O, B extends Benchmark<S, O>>
   Future<void> shutdown(BenchmarkOnIsolateSetup<S> setup, O? service) async {
     await benchmark.shutdown(setup.setup, service);
     await setup.shutdown();
+
+    var shutdownIsolateDelay = this.shutdownIsolateDelay;
+    if (shutdownIsolateDelay != null) {
+      await Future.delayed(shutdownIsolateDelay);
+    }
   }
 
   /// Executes the benchmark job.
@@ -107,6 +118,7 @@ class _BenchmarkOnIsolate<S, O, B extends Benchmark<S, O>>
     });
 
     await shutdownCompleter.future;
+    receivePort.close();
   }
 }
 
@@ -204,6 +216,7 @@ extension IterableBenchmarkExtension<S, O, B extends Benchmark<S, O>>
     int? warmup,
     int? interactions,
     bool setupOnIsolate = false,
+    Duration? shutdownIsolateDelay,
     bool verbose = false,
   }) async {
     var results = <BenchmarkResult<S, O, B>>[];
@@ -214,6 +227,7 @@ extension IterableBenchmarkExtension<S, O, B extends Benchmark<S, O>>
           warmup: warmup,
           interactions: interactions,
           setupOnIsolate: setupOnIsolate,
+          shutdownIsolateDelay: shutdownIsolateDelay,
           verbose: verbose);
 
       results.add(r);
@@ -433,11 +447,13 @@ Future<BenchmarkResult<S, O, B>> benchmark<S, O, B extends Benchmark<S, O>>(
   int? warmup,
   int? interactions,
   bool setupOnIsolate = false,
+  Duration? shutdownIsolateDelay,
   bool verbose = false,
 }) async {
   if (setupOnIsolate) {
     var result = await _benchmarkImpl(
-      _BenchmarkOnIsolate<S, O, B>(benchmark),
+      _BenchmarkOnIsolate<S, O, B>(benchmark,
+          shutdownIsolateDelay: shutdownIsolateDelay),
       profile: profile,
       warmup: warmup,
       interactions: interactions,

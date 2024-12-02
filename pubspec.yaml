@@ -1,6 +1,6 @@
 name: async_benchmark
 description: A Dart package for running and analyzing benchmarks with support for isolated environments and performance tracking.
-version: 1.0.0
+version: 1.0.1
 repository: https://github.com/eneural-net/async_benchmark
 
 environment:
