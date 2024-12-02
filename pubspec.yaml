@@ -12,3 +12,4 @@ dependencies:
 dev_dependencies:
   lints: ^4.0.0
   test: ^1.25.9
+  dependency_validator: ^4.1.1
