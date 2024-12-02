@@ -145,12 +145,14 @@ extension BenchmarkExtension<S, O, B extends Benchmark<S, O>> on B {
     int? warmup,
     int? interactions,
     bool setupOnIsolate = false,
+    verbose = false,
   }) =>
       benchmark(this,
           profile: profile,
           warmup: warmup,
           interactions: interactions,
-          setupOnIsolate: setupOnIsolate);
+          setupOnIsolate: setupOnIsolate,
+          verbose: verbose);
 }
 
 extension IterableBenchmarkExtension<S, O, B extends Benchmark<S, O>>
@@ -160,6 +162,7 @@ extension IterableBenchmarkExtension<S, O, B extends Benchmark<S, O>>
     int? warmup,
     int? interactions,
     bool setupOnIsolate = false,
+    bool verbose = false,
   }) async {
     var results = <BenchmarkResult<S, O, B>>[];
 
@@ -168,7 +171,8 @@ extension IterableBenchmarkExtension<S, O, B extends Benchmark<S, O>>
           profile: profile,
           warmup: warmup,
           interactions: interactions,
-          setupOnIsolate: setupOnIsolate);
+          setupOnIsolate: setupOnIsolate,
+          verbose: verbose);
 
       results.add(r);
     }
@@ -179,12 +183,15 @@ extension IterableBenchmarkExtension<S, O, B extends Benchmark<S, O>>
       var bestBench = bestResult.benchmark;
       var bestRound = bestResult.rounds.best;
 
-      print('╔═${'═' * bestBench.title.length}══');
-      print('║ BEST BENCHMARK: ${bestBench.title} (round: ${bestRound.round})');
-      print('║');
-      print('║ »» Duration: ${bestRound.duration}');
-      print('║ »» Speed: ${bestRound.hertzFormatted}');
-      print('║ »» Interaction Time: ${bestRound.interactionTimeFormatted}');
+      if (verbose) {
+        print('╔═${'═' * bestBench.title.length}══');
+        print(
+            '║ BEST BENCHMARK: ${bestBench.title} (round: ${bestRound.round})');
+        print('║');
+        print('║ »» Duration: ${bestRound.duration}');
+        print('║ »» Speed: ${bestRound.hertzFormatted}');
+        print('║ »» Interaction Time: ${bestRound.interactionTimeFormatted}');
+      }
 
       if (results.length > 1) {
         var resultsSorted = results.toList();
@@ -201,19 +208,22 @@ extension IterableBenchmarkExtension<S, O, B extends Benchmark<S, O>>
 
           var ratio = best.hertz / bestRound.hertz;
 
-          print(line);
-
-          print('║ BENCHMARK: ${bench.title} (round: ${best.round})');
-          print('║ »» Duration: ${best.duration}');
-          print('║ »» Speed: ${best.hertzFormatted}');
-          print('║ »» Interaction Time: ${best.interactionTimeFormatted}');
-          print(
-              '║ »» Speed ratio: ${ratio.toStringAsFixed(4)} (${(1 / ratio).toStringAsFixed(4)} x)');
+          if (verbose) {
+            print(line);
+            print('║ BENCHMARK: ${bench.title} (round: ${best.round})');
+            print('║ »» Duration: ${best.duration}');
+            print('║ »» Speed: ${best.hertzFormatted}');
+            print('║ »» Interaction Time: ${best.interactionTimeFormatted}');
+            print(
+                '║ »» Speed ratio: ${ratio.toStringAsFixed(4)} (${(1 / ratio).toStringAsFixed(4)} x)');
+          }
         }
       }
 
-      print('╚═${'═' * bestBench.title.length}══');
-      print('');
+      if (verbose) {
+        print('╚═${'═' * bestBench.title.length}══');
+        print('');
+      }
     }
 
     return results;
@@ -343,6 +353,7 @@ Future<BenchmarkResult<S, O, B>> benchmark<S, O, B extends Benchmark<S, O>>(
   int? warmup,
   int? interactions,
   bool setupOnIsolate = false,
+  bool verbose = false,
 }) async {
   if (setupOnIsolate) {
     var result = await _benchmarkImpl(
@@ -351,6 +362,7 @@ Future<BenchmarkResult<S, O, B>> benchmark<S, O, B extends Benchmark<S, O>>(
       warmup: warmup,
       interactions: interactions,
       setupOnIsolate: true,
+      verbose: verbose,
     );
     return BenchmarkResult<S, O, B>(benchmark, result.rounds);
   } else {
@@ -359,6 +371,7 @@ Future<BenchmarkResult<S, O, B>> benchmark<S, O, B extends Benchmark<S, O>>(
       profile: profile,
       warmup: warmup,
       interactions: interactions,
+      verbose: verbose,
     );
   }
 }
@@ -371,42 +384,58 @@ Future<BenchmarkResult<S, O, B>>
   int? interactions,
   int? rounds,
   bool setupOnIsolate = false,
+  bool verbose = false,
 }) async {
   final title = benchmark.title;
 
-  print('╔═${'═' * title.length}═╗');
-  print('║ $title ║');
-  print('╠═${'═' * title.length}═╝');
+  if (verbose) {
+    print('╔═${'═' * title.length}═╗');
+    print('║ $title ║');
+    print('╠═${'═' * title.length}═╝');
+  }
 
   if (profile != null) {
-    warmup = profile.warmup;
-    interactions = profile.interactions;
-    rounds = profile.rounds;
-    print('║ $profile');
+    warmup ??= profile.warmup;
+    interactions ??= profile.interactions;
+    rounds ??= profile.rounds;
+
+    if (verbose) {
+      print('║ $profile');
+    }
   } else {
     warmup ??= BenchmarkProfile.normal.warmup;
     interactions ??= BenchmarkProfile.normal.interactions;
     rounds ??= BenchmarkProfile.normal.rounds;
-    print('║ warmup: $warmup');
-    print('║ interactions: $interactions');
-    print('║ rounds: $rounds');
+
+    if (verbose) {
+      print('║ warmup: $warmup');
+      print('║ interactions: $interactions');
+      print('║ rounds: $rounds');
+    }
   }
 
   final line = '╠─${'─' * title.length}──';
 
-  print(line);
+  if (verbose) {
+    print(line);
+    print(setupOnIsolate ? '║ Setup (on Isolate)...' : '║ Setup...');
+  }
 
-  print(setupOnIsolate ? '║ Setup (on Isolate)...' : '║ Setup...');
   var s = await benchmark.setup();
 
-  print('║ ─ $s');
+  if (verbose) {
+    print('║ ─ $s');
+  }
 
   final setup = s.setup;
   final service = s.service;
 
   await Future.delayed(Duration(milliseconds: 10));
 
-  print('║ Warmup ($warmup)...');
+  if (verbose) {
+    print('║ Warmup ($warmup)...');
+  }
+
   for (var i = 0; i < warmup; ++i) {
     await benchmark.job(setup, service);
   }
@@ -414,13 +443,18 @@ Future<BenchmarkResult<S, O, B>>
   var roundsResults = <BenchmarkRoundResult>[];
 
   for (var r = 1; r <= rounds; ++r) {
-    print(line);
-    print('║ ROUND: $r/$rounds');
-    print('║');
+    if (verbose) {
+      print(line);
+      print('║ ROUND: $r/$rounds');
+      print('║');
+    }
 
     await Future.delayed(Duration(milliseconds: 10));
 
-    print('║ ─ Running ($interactions)...');
+    if (verbose) {
+      print('║ ─ Running ($interactions)...');
+    }
+
     final initTime = DateTime.now();
 
     for (var i = 0; i < interactions; ++i) {
@@ -429,38 +463,51 @@ Future<BenchmarkResult<S, O, B>>
 
     final endTime = DateTime.now();
 
-    print('║ ─ Teardown...');
+    if (verbose) {
+      print('║ ─ Teardown...');
+    }
+
     await benchmark.teardown(setup, service);
 
-    print('║');
+    if (verbose) {
+      print('║');
+    }
 
     var roundResult = BenchmarkRoundResult(r, initTime, endTime, interactions);
 
     roundsResults.add(roundResult);
 
-    print('║ »» Duration: ${roundResult.duration}');
-    print('║ »» Speed: ${roundResult.hertzFormatted}');
-    print('║ »» Interaction Time: ${roundResult.interactionTimeFormatted}');
+    if (verbose) {
+      print('║ »» Duration: ${roundResult.duration}');
+      print('║ »» Speed: ${roundResult.hertzFormatted}');
+      print('║ »» Interaction Time: ${roundResult.interactionTimeFormatted}');
+    }
   }
 
   if (rounds > 1) {
     var bestRound = roundsResults.best;
 
-    print(line);
-    print('║ BEST ROUND: ${bestRound.round}');
-    print('║');
-    print('║ »» Duration: ${bestRound.duration}');
-    print('║ »» Speed: ${bestRound.hertzFormatted}');
-    print('║ »» Interaction Time: ${bestRound.interactionTimeFormatted}');
+    if (verbose) {
+      print(line);
+      print('║ BEST ROUND: ${bestRound.round}');
+      print('║');
+      print('║ »» Duration: ${bestRound.duration}');
+      print('║ »» Speed: ${bestRound.hertzFormatted}');
+      print('║ »» Interaction Time: ${bestRound.interactionTimeFormatted}');
+    }
   }
 
-  print(line);
+  if (verbose) {
+    print(line);
+    print('║ Shutdown...');
+  }
 
-  print('║ Shutdown...');
   await benchmark.shutdown(setup, service);
 
-  print('╚═${'═' * title.length}══');
-  print('');
+  if (verbose) {
+    print('╚═${'═' * title.length}══');
+    print('');
+  }
 
   return BenchmarkResult(benchmark, roundsResults);
 }
