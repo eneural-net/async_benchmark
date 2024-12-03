@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:isolate';
+import 'dart:math' as math;
 
 /// Type for setup value and shutting down benchmarks service on an [Isolate].
 typedef BenchmarkOnIsolateSetup<S> = ({
@@ -215,13 +216,26 @@ extension IterableBenchmarkExtension<S, O, B extends Benchmark<S, O>>
     BenchmarkProfile? profile,
     int? warmup,
     int? interactions,
+    Duration? interactionDelay,
     bool setupOnIsolate = false,
     Duration? shutdownIsolateDelay,
+    bool shuffle = false,
+    int? shuffleSeed,
     bool verbose = false,
   }) async {
     var results = <BenchmarkResult<S, O, B>>[];
 
-    for (var b in this) {
+    var benchmarks = this;
+
+    if (shuffle) {
+      var rand = math.Random(shuffleSeed);
+      var benchmarksShuffled = benchmarks.toList();
+      benchmarksShuffled.shuffle(rand);
+
+      benchmarks = benchmarksShuffled;
+    }
+
+    for (var b in benchmarks) {
       var r = await benchmark<S, O, B>(b,
           profile: profile,
           warmup: warmup,
@@ -231,6 +245,10 @@ extension IterableBenchmarkExtension<S, O, B extends Benchmark<S, O>>
           verbose: verbose);
 
       results.add(r);
+
+      if (interactionDelay != null) {
+        await Future.delayed(interactionDelay);
+      }
     }
 
     if (results.isNotEmpty) {

@@ -1,3 +1,8 @@
+## 1.0.2
+
+- `IterableBenchmarkExtension`:
+  - `runAll`: added parameters `interactionDelay`, `shuffle`, `shuffleSeed`. 
+
 ## 1.0.1
 
 - `_BenchmarkOnIsolate`:
