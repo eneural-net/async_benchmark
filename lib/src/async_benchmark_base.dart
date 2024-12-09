@@ -158,6 +158,14 @@ class BenchmarkProfile {
   const BenchmarkProfile(this.name,
       {required this.warmup, required this.interactions, required this.rounds});
 
+  /// Creates a copy of the current `BenchmarkProfile` instance with updated values.
+  BenchmarkProfile copyWith(
+          {String? name, int? warmup, int? interactions, int? rounds}) =>
+      BenchmarkProfile(name ?? this.name,
+          warmup: warmup ?? this.warmup,
+          interactions: interactions ?? this.interactions,
+          rounds: rounds ?? this.rounds);
+
   @override
   String toString() =>
       'BenchmarkProfile[$name]{warmup: $warmup, interactions: $interactions, rounds: $rounds}';

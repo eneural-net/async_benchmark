@@ -1,3 +1,11 @@
+## 1.0.3
+
+- `BenchmarkProfile`:
+  - Added `copyWith`.
+
+- test: ^1.25.12
+- dependency_validator: ^4.1.2
+
 ## 1.0.2
 
 - `IterableBenchmarkExtension`:
