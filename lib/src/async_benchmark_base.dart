@@ -208,6 +208,9 @@ class BenchmarkProfile {
   final int rounds;
 
   /// Constructs a custom [BenchmarkProfile].
+  ///
+  /// The values are not checked here (this constructor is `const`): they are
+  /// checked by [validate], which every run calls before running anything.
   const BenchmarkProfile(
     this.name, {
     required this.warmup,
@@ -227,6 +230,34 @@ class BenchmarkProfile {
     interactions: interactions ?? this.interactions,
     rounds: rounds ?? this.rounds,
   );
+
+  /// Checks that this profile can be run, throwing an [ArgumentError] naming
+  /// the first invalid field:
+  /// - [warmup] must be `>= 0` (`0` runs no warmup);
+  /// - [interactions] must be `>= 1` (a round without interactions measures
+  ///   nothing);
+  /// - [rounds] must be `>= 1` (a run without rounds has no result).
+  ///
+  /// There is no upper limit: a large count only makes the run longer.
+  ///
+  /// [benchmark], [BenchmarkExtension.run] and
+  /// [IterableBenchmarkExtension.runAll] call it (with their `warmup` and
+  /// `interactions` overrides applied) before running anything.
+  void validate() {
+    if (warmup < 0) {
+      throw ArgumentError.value(warmup, 'warmup', 'Must not be negative');
+    }
+    if (interactions < 1) {
+      throw ArgumentError.value(
+        interactions,
+        'interactions',
+        'Must be at least 1',
+      );
+    }
+    if (rounds < 1) {
+      throw ArgumentError.value(rounds, 'rounds', 'Must be at least 1');
+    }
+  }
 
   @override
   String toString() =>
@@ -285,6 +316,9 @@ extension BenchmarkExtension<S, O, B extends Benchmark<S, O>> on B {
 extension IterableBenchmarkExtension<S, O, B extends Benchmark<S, O>>
     on Iterable<B> {
   /// Runs all benchmarks in the iterable collection with the specified options.
+  ///
+  /// The counts are validated (see [BenchmarkProfile.validate]) before any
+  /// benchmark runs: invalid counts throw an [ArgumentError] and run nothing.
   Future<List<BenchmarkResult<S, O, B>>> runAll({
     BenchmarkProfile? profile,
     int? warmup,
@@ -296,6 +330,8 @@ extension IterableBenchmarkExtension<S, O, B extends Benchmark<S, O>>
     int? shuffleSeed,
     bool verbose = false,
   }) async {
+    _effectiveProfile(profile, warmup, interactions);
+
     var results = <BenchmarkResult<S, O, B>>[];
 
     var benchmarks = this;
@@ -326,8 +362,12 @@ extension IterableBenchmarkExtension<S, O, B extends Benchmark<S, O>>
       }
     }
 
-    if (results.isNotEmpty) {
-      var bestResult = results.best;
+    // Only results with rounds can be compared (all of them, for validated
+    // counts).
+    final measured = results.where((r) => r.rounds.isNotEmpty).toList();
+
+    if (measured.isNotEmpty) {
+      var bestResult = measured.best;
 
       var bestBench = bestResult.benchmark;
       var bestRound = bestResult.rounds.best;
@@ -343,8 +383,8 @@ extension IterableBenchmarkExtension<S, O, B extends Benchmark<S, O>>
         print('║ »» Interaction Time: ${bestRound.interactionTimeFormatted}');
       }
 
-      if (results.length > 1) {
-        var resultsSorted = results.toList();
+      if (measured.length > 1) {
+        var resultsSorted = measured.toList();
         resultsSorted.sort();
 
         final line = '╠─${'─' * bestBench.title.length}──';
@@ -356,17 +396,13 @@ extension IterableBenchmarkExtension<S, O, B extends Benchmark<S, O>>
           var rounds = r.rounds;
           var best = rounds.best;
 
-          var ratio = best.hertz / bestRound.hertz;
-
           if (verbose) {
             print(line);
             print('║ BENCHMARK: ${bench.title} (round: ${best.round})');
             print('║ »» Duration: ${best.duration}');
             print('║ »» Speed: ${best.hertzFormatted}');
             print('║ »» Interaction Time: ${best.interactionTimeFormatted}');
-            print(
-              '║ »» Speed ratio: ${ratio.toStringAsFixed(4)} (${(1 / ratio).toStringAsFixed(4)} x)',
-            );
+            print('║ »» Speed ratio: ${best.speedRatioFormatted(bestRound)}');
           }
         }
       }
@@ -384,20 +420,24 @@ extension IterableBenchmarkExtension<S, O, B extends Benchmark<S, O>>
 extension MapEntryBenchmarkResultsExtension<S, O, B extends Benchmark<S, O>>
     on MapEntry<B, List<BenchmarkRoundResult>> {
   /// Returns the entry with the best performance (higher Hertz value).
+  /// An entry without rounds loses to one with rounds.
   MapEntry<B, List<BenchmarkRoundResult>> best(
     MapEntry<B, List<BenchmarkRoundResult>> other,
-  ) {
-    var b1 = value.best;
-    var b2 = other.value.best;
+  ) => _compareBestRounds(value, other.value) <= 0 ? this : other;
+}
 
-    var best = b1.best(b2);
-
-    if (identical(best, b1)) {
-      return this;
-    } else {
-      return other;
-    }
-  }
+/// Compares the best rounds of [a] and [b] (as [BenchmarkRoundResult.compareTo]
+/// does): negative if [a]'s is faster. A list without rounds sorts after one
+/// with rounds.
+int _compareBestRounds(
+  Iterable<BenchmarkRoundResult> a,
+  Iterable<BenchmarkRoundResult> b,
+) {
+  final bestA = a.bestOrNull;
+  final bestB = b.bestOrNull;
+  if (bestA == null) return bestB == null ? 0 : 1;
+  if (bestB == null) return -1;
+  return bestA.compareTo(bestB);
 }
 
 /// A structure that contains the results of a benchmark execution.
@@ -411,14 +451,14 @@ class BenchmarkResult<S, O, B extends Benchmark<S, O>>
 
   BenchmarkResult(this.benchmark, this.rounds);
 
+  /// Compares the best rounds: negative if this result is faster. A result
+  /// without rounds sorts after one with rounds.
   @override
-  int compareTo(BenchmarkResult<S, O, B> other) {
-    var b1 = rounds.best;
-    var b2 = other.rounds.best;
-    return b1.compareTo(b2);
-  }
+  int compareTo(BenchmarkResult<S, O, B> other) =>
+      _compareBestRounds(rounds, other.rounds);
 
   /// Returns the [BenchmarkResult] with the best performance (higher Hertz value).
+  /// A result without rounds loses to one with rounds.
   BenchmarkResult<S, O, B> best(BenchmarkResult<S, O, B> other) =>
       compareTo(other) <= 0 ? this : other;
 
@@ -434,6 +474,8 @@ extension IterableBenchmarkResultExtension<
   R extends BenchmarkResult<S, O, B>
 >
     on Iterable<R> {
+  /// Returns the [BenchmarkResult] with the best performance (higher Hertz
+  /// value). Throws a [StateError] if there are no results.
   R get best => reduce((a, b) => a.best(b) as R);
 }
 
@@ -454,13 +496,39 @@ class BenchmarkRoundResult implements Comparable<BenchmarkRoundResult> {
   /// The total duration of the round execution.
   late final Duration duration = endTime.difference(initTime);
 
+  /// Whether the round measured something: it has [interactions] and a
+  /// positive [duration]. Otherwise [hertzFormatted],
+  /// [interactionTimeFormatted] and [speedRatioFormatted] print `n/a`.
+  bool get isMeasurable => interactions > 0 && duration > Duration.zero;
+
   /// The Hertz value representing the performance ([interactions] per second).
-  late final double hertz =
-      (interactions / duration.inMicroseconds) * (1000 * 1000);
+  ///
+  /// - `0` if there are no [interactions].
+  /// - [double.infinity] if the [duration] is zero (or negative): the round
+  ///   was faster than the clock resolution. It compares as the fastest.
+  late final double hertz = interactions <= 0
+      ? 0
+      : duration <= Duration.zero
+      ? double.infinity
+      : (interactions / duration.inMicroseconds) * (1000 * 1000);
 
   /// The average time per job interaction in milliseconds.
-  late final double interactionTimeMs =
-      (duration.inMicroseconds / interactions) / 1000;
+  ///
+  /// - [double.nan] if there are no [interactions].
+  /// - `0` if the [duration] is zero (or negative).
+  late final double interactionTimeMs = interactions <= 0
+      ? double.nan
+      : duration <= Duration.zero
+      ? 0
+      : (duration.inMicroseconds / interactions) / 1000;
+
+  /// Why this round is not [isMeasurable], as printed in place of a value;
+  /// `null` if it is.
+  String? get _notMeasurable => interactions <= 0
+      ? 'n/a (no interactions)'
+      : duration <= Duration.zero
+      ? 'n/a (too fast to measure)'
+      : null;
 
   BenchmarkRoundResult(
     this.round,
@@ -469,8 +537,13 @@ class BenchmarkRoundResult implements Comparable<BenchmarkRoundResult> {
     this.interactions,
   );
 
-  /// A formatted string representing the [hertz] value.
+  /// A formatted string representing the [hertz] value, or
+  /// `n/a (no interactions)` / `n/a (too fast to measure)` if the round is
+  /// not [isMeasurable]. It never prints `Infinity` or `NaN`.
   String get hertzFormatted {
+    final notMeasurable = _notMeasurable;
+    if (notMeasurable != null) return notMeasurable;
+
     var hz = hertz;
 
     if (hz > 1) {
@@ -484,8 +557,12 @@ class BenchmarkRoundResult implements Comparable<BenchmarkRoundResult> {
     }
   }
 
-  /// A formatted string representing the [interactionTimeMs].
+  /// A formatted string representing the [interactionTimeMs], or `n/a (...)`
+  /// as in [hertzFormatted].
   String get interactionTimeFormatted {
+    final notMeasurable = _notMeasurable;
+    if (notMeasurable != null) return notMeasurable;
+
     var ms = interactionTimeMs;
 
     if (ms >= 2000) {
@@ -511,6 +588,19 @@ class BenchmarkRoundResult implements Comparable<BenchmarkRoundResult> {
     }
   }
 
+  /// The speed of this round relative to [best]'s, as printed by
+  /// [IterableBenchmarkResultExtension.runAll]: `ratio (inverse x)`, both with
+  /// 4 decimals, e.g. `0.5000 (2.0000 x)` for half the speed of [best].
+  /// `n/a (...)` (as in [hertzFormatted]) if either round is not
+  /// [isMeasurable].
+  String speedRatioFormatted(BenchmarkRoundResult best) {
+    final notMeasurable = _notMeasurable ?? best._notMeasurable;
+    if (notMeasurable != null) return notMeasurable;
+
+    final ratio = hertz / best.hertz;
+    return '${ratio.toStringAsFixed(4)} (${(1 / ratio).toStringAsFixed(4)} x)';
+  }
+
   @override
   int compareTo(BenchmarkRoundResult other) => other.hertz.compareTo(hertz);
 
@@ -525,7 +615,12 @@ class BenchmarkRoundResult implements Comparable<BenchmarkRoundResult> {
 
 extension BenchmarkRoundResultExtension on Iterable<BenchmarkRoundResult> {
   /// Returns the [BenchmarkRoundResult] with the best performance (higher Hertz value).
+  ///
+  /// Throws a [StateError] if there are no rounds: see [bestOrNull].
   BenchmarkRoundResult get best => reduce((a, b) => a.best(b));
+
+  /// Like [best], but `null` if there are no rounds.
+  BenchmarkRoundResult? get bestOrNull => isEmpty ? null : best;
 }
 
 /// Runs a benchmark with the specified configuration, executing the setup,
@@ -550,6 +645,9 @@ extension BenchmarkRoundResultExtension on Iterable<BenchmarkRoundResult> {
 /// If a [Benchmark.job] or [Benchmark.teardown] throws, [Benchmark.shutdown]
 /// is still called (and any error it throws ignored) before the original
 /// error is rethrown.
+///
+/// The counts are validated first (see [BenchmarkProfile.validate]): invalid
+/// counts throw an [ArgumentError] before `setup` runs.
 Future<BenchmarkResult<S, O, B>> benchmark<S, O, B extends Benchmark<S, O>>(
   B benchmark, {
   BenchmarkProfile? profile,
@@ -559,6 +657,8 @@ Future<BenchmarkResult<S, O, B>> benchmark<S, O, B extends Benchmark<S, O>>(
   Duration? shutdownIsolateDelay,
   bool verbose = false,
 }) async {
+  final counts = _effectiveProfile(profile, warmup, interactions);
+
   if (setupOnIsolate) {
     var result = await _benchmarkImpl(
       _BenchmarkOnIsolate<S, O, B>(
@@ -566,8 +666,7 @@ Future<BenchmarkResult<S, O, B>> benchmark<S, O, B extends Benchmark<S, O>>(
         shutdownIsolateDelay: shutdownIsolateDelay,
       ),
       profile: profile,
-      warmup: warmup,
-      interactions: interactions,
+      counts: counts,
       setupOnIsolate: true,
       verbose: verbose,
     );
@@ -576,20 +675,28 @@ Future<BenchmarkResult<S, O, B>> benchmark<S, O, B extends Benchmark<S, O>>(
     return _benchmarkImpl(
       benchmark,
       profile: profile,
-      warmup: warmup,
-      interactions: interactions,
+      counts: counts,
       verbose: verbose,
     );
   }
 }
 
-Future<BenchmarkResult<S, O, B>>
-_benchmarkImpl<S, O, B extends Benchmark<S, O>>(
-  B benchmark, {
+/// The [profile] (default: [BenchmarkProfile.normal]) with the [warmup] and
+/// [interactions] overrides applied, validated.
+BenchmarkProfile _effectiveProfile(
   BenchmarkProfile? profile,
   int? warmup,
   int? interactions,
-  int? rounds,
+) => (profile ?? BenchmarkProfile.normal).copyWith(
+  warmup: warmup,
+  interactions: interactions,
+)..validate();
+
+Future<BenchmarkResult<S, O, B>>
+_benchmarkImpl<S, O, B extends Benchmark<S, O>>(
+  B benchmark, {
+  required BenchmarkProfile? profile,
+  required BenchmarkProfile counts,
   bool setupOnIsolate = false,
   bool verbose = false,
 }) async {
@@ -599,25 +706,13 @@ _benchmarkImpl<S, O, B extends Benchmark<S, O>>(
     print('╔═${'═' * title.length}═╗');
     print('║ $title ║');
     print('╠═${'═' * title.length}═╝');
-  }
 
-  if (profile != null) {
-    warmup ??= profile.warmup;
-    interactions ??= profile.interactions;
-    rounds ??= profile.rounds;
-
-    if (verbose) {
+    if (profile != null) {
       print('║ $profile');
-    }
-  } else {
-    warmup ??= BenchmarkProfile.normal.warmup;
-    interactions ??= BenchmarkProfile.normal.interactions;
-    rounds ??= BenchmarkProfile.normal.rounds;
-
-    if (verbose) {
-      print('║ warmup: $warmup');
-      print('║ interactions: $interactions');
-      print('║ rounds: $rounds');
+    } else {
+      print('║ warmup: ${counts.warmup}');
+      print('║ interactions: ${counts.interactions}');
+      print('║ rounds: ${counts.rounds}');
     }
   }
 
@@ -643,9 +738,9 @@ _benchmarkImpl<S, O, B extends Benchmark<S, O>>(
       benchmark,
       setup,
       service,
-      warmup: warmup,
-      interactions: interactions,
-      rounds: rounds,
+      warmup: counts.warmup,
+      interactions: counts.interactions,
+      rounds: counts.rounds,
       line: line,
       verbose: verbose,
     );

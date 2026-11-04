@@ -33,8 +33,13 @@ Future<List<String>> runScript(
 }
 
 final _duration = RegExp(r'^\d+:\d\d:\d\d\.\d{6}$');
-final _speed = RegExp(r' Hz$');
-final _time = RegExp(r' (sec|ms|µs)$');
+// A round faster than the clock resolution prints `n/a (...)`, never
+// `Infinity` or `NaN`.
+const _notMeasurable = r'n/a \(too fast to measure\)';
+final _speed = RegExp('^║ »» Speed: (\\d+\\.\\d+ Hz|$_notMeasurable)\$');
+final _time = RegExp(
+  '^║ »» Interaction Time: (\\d+\\.\\d+ (sec|ms|µs)|$_notMeasurable)\$',
+);
 
 /// Matches the three `»»` lines printed for a round.
 void expectRoundMetrics(List<String> lines, int at) {
@@ -141,17 +146,25 @@ void main() {
         others.add(m!.group(1)!);
         expectRoundMetrics(lines, at + 2);
 
+        final ratioLine = lines[at + 5];
         final ratio = RegExp(
           r'^║ »» Speed ratio: (\d+\.\d{4}) \((\d+\.\d{4}) x\)$',
-        ).firstMatch(lines[at + 5]);
-        expect(ratio, isNotNull, reason: lines[at + 5]);
-        // Compared against the best: at most as fast, and the inverse.
-        final r = double.parse(ratio!.group(1)!);
-        final inverse = double.parse(ratio.group(2)!);
-        expect(r, lessThanOrEqualTo(1));
-        expect(inverse, greaterThanOrEqualTo(1));
-        // Both are rounded to 4 decimals.
-        expect(1 / inverse, closeTo(r, 0.0001));
+        ).firstMatch(ratioLine);
+        if (ratio == null) {
+          // The best round (or this one) was too fast to measure.
+          expect(
+            ratioLine,
+            equals('║ »» Speed ratio: n/a (too fast to measure)'),
+          );
+        } else {
+          // Compared against the best: at most as fast, and the inverse.
+          final r = double.parse(ratio.group(1)!);
+          final inverse = double.parse(ratio.group(2)!);
+          expect(r, lessThanOrEqualTo(1));
+          expect(inverse, greaterThanOrEqualTo(1));
+          // Both are rounded to 4 decimals.
+          expect(1 / inverse, closeTo(r, 0.0001));
+        }
         at += 6;
       }
       expect(others.toSet(), equals(order.toSet()..remove(best)));
