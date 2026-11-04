@@ -8,8 +8,10 @@ void main() {
     test('fast', () async {
       var bench = BenchmarkPrime();
 
-      var results =
-          await bench.run(profile: BenchmarkProfile.fast, verbose: true);
+      var results = await bench.run(
+        profile: BenchmarkProfile.fast,
+        verbose: true,
+      );
 
       var rounds = results.rounds;
 
@@ -18,7 +20,15 @@ void main() {
       var bestRound = rounds.best;
 
       expect(bestRound.round, equals(1));
-      expect(bestRound.duration.inMilliseconds, greaterThan(1));
+      // The round's wall-clock duration depends on the machine: assert that
+      // time was measured and the profile's interactions ran, not how long
+      // they took (a faster machine finishes the round in under 1 ms).
+      expect(
+        bestRound.interactions,
+        equals(BenchmarkProfile.fast.interactions),
+      );
+      expect(bestRound.duration, greaterThanOrEqualTo(Duration.zero));
+      expect(bestRound.endTime.isBefore(bestRound.initTime), isFalse);
     });
   });
 }
