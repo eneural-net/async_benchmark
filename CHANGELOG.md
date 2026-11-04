@@ -1,3 +1,46 @@
+## 1.2.0
+
+- `benchmark` / `BenchmarkExtension.run` / `IterableBenchmarkExtension.runAll`:
+  - Changed: the counts (the profile, default `BenchmarkProfile.normal`, with
+    the `warmup` and `interactions` overrides applied) are validated before
+    anything runs, throwing an `ArgumentError` naming the invalid field:
+    `warmup` must be `>= 0`, `interactions` `>= 1` and `rounds` `>= 1`.
+    Negative counts used to run nothing silently, and `rounds: 0` made
+    `runAll` throw `StateError: No element` after every benchmark had run.
+    `runAll` validates before its first benchmark; no setup, isolate or
+    report line is started for invalid counts. There is no upper limit: a
+    large count only makes the run longer.
+  - Fixed: the `runAll` summary no longer prints `Infinity`/`NaN` speed
+    ratios when a round is too fast to measure.
+
+- `BenchmarkProfile`:
+  - Added `validate()`, the check above (the constructor is `const`, so it
+    can't check its values).
+
+- `BenchmarkRoundResult`:
+  - Changed: `hertzFormatted` and `interactionTimeFormatted` print
+    `n/a (too fast to measure)` for a zero (or negative) duration and
+    `n/a (no interactions)` for a round without interactions, instead of
+    `Infinity Hz`, `NaN Hz`, `Infinity sec` or `0.000000 µs`.
+  - Changed: `hertz` is `0` without interactions (was `NaN` with a zero
+    duration, so such a round compared as the fastest); it stays
+    `double.infinity` for a zero duration. `interactionTimeMs` is `NaN`
+    without interactions and `0` for a zero (or negative) duration.
+  - Added `isMeasurable` and `speedRatioFormatted(best)` (the `runAll`
+    speed ratio, or `n/a (...)`).
+
+- `BenchmarkResult` / `MapEntryBenchmarkResultsExtension`:
+  - Fixed: `compareTo` and `best` no longer throw for a result without
+    rounds: it sorts after (and loses to) one with rounds.
+
+- `BenchmarkRoundResultExtension`:
+  - Added `bestOrNull` (`null` without rounds; `best` still throws).
+
+- Tests:
+  - Validation of every count, through `run`, `runAll` and
+    `setupOnIsolate`, before any setup.
+  - The `n/a` formats, the speed ratio, and results without rounds.
+
 ## 1.1.1
 
 - `benchmark` / `BenchmarkExtension.run` / `IterableBenchmarkExtension.runAll`:

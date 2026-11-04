@@ -72,6 +72,12 @@ class LifecycleBenchmark extends Benchmark<int, String> {
   String toString() => 'LifecycleBenchmark[$title]';
 }
 
+/// Runs a benchmark in some way (see the profile boundary tests).
+typedef RunWith = Future<Object?> Function(LifecycleBenchmark bench);
+
+/// Runs a list of benchmarks in some way (see the profile boundary tests).
+typedef RunAllWith = Future<Object?> Function(List<LifecycleBenchmark> list);
+
 const _profile = BenchmarkProfile(
   'test',
   warmup: 2,
@@ -130,21 +136,33 @@ List<String> expectedRunReport(
 
 void main() {
   group('BenchmarkRoundResult edge values', () {
+    // Printed values are never `Infinity` or `NaN`.
+    Matcher readable = isNot(anyOf(contains('Infinity'), contains('NaN')));
+
     test('zero interactions in a measured round', () {
       var r = roundOf(1, Duration(milliseconds: 1), 0);
+      expect(r.isMeasurable, isFalse);
       expect(r.hertz, equals(0));
-      expect(r.hertzFormatted, equals('0.0 Hz'));
-      expect(r.interactionTimeMs, equals(double.infinity));
-      expect(r.interactionTimeFormatted, equals('Infinity sec'));
+      expect(r.hertzFormatted, equals('n/a (no interactions)'));
+      expect(r.interactionTimeMs.isNaN, isTrue);
+      expect(r.interactionTimeFormatted, equals('n/a (no interactions)'));
+      expect(r.toString(), readable);
+
+      // It compares as the slowest round.
+      var measured = roundOf(2, Duration(seconds: 100), 1);
+      expect(r.best(measured), same(measured));
+      expect(measured.best(r), same(measured));
     });
 
     test('a round too fast to measure (zero duration)', () {
       var r = roundOf(1, Duration.zero, 10);
       expect(r.duration, equals(Duration.zero));
+      expect(r.isMeasurable, isFalse);
       expect(r.hertz, equals(double.infinity));
-      expect(r.hertzFormatted, equals('Infinity Hz'));
+      expect(r.hertzFormatted, equals('n/a (too fast to measure)'));
       expect(r.interactionTimeMs, equals(0));
-      expect(r.interactionTimeFormatted, equals('0.000000 µs'));
+      expect(r.interactionTimeFormatted, equals('n/a (too fast to measure)'));
+      expect(r.toString(), readable);
 
       // It still compares as the fastest round.
       var measured = roundOf(2, Duration(microseconds: 1), 10);
@@ -152,12 +170,39 @@ void main() {
       expect(measured.best(r), same(r));
     });
 
+    test('a negative duration (the clock moved back) is not measurable', () {
+      var r = roundOf(1, Duration(microseconds: -5), 10);
+      expect(r.isMeasurable, isFalse);
+      expect(r.hertz, equals(double.infinity));
+      expect(r.interactionTimeMs, equals(0));
+      expect(r.hertzFormatted, equals('n/a (too fast to measure)'));
+      expect(r.interactionTimeFormatted, equals('n/a (too fast to measure)'));
+    });
+
     test('zero interactions and zero duration', () {
       var r = roundOf(1, Duration.zero, 0);
-      expect(r.hertz.isNaN, isTrue);
-      expect(r.hertzFormatted, equals('NaN Hz'));
+      expect(r.isMeasurable, isFalse);
+      expect(r.hertz, equals(0));
+      expect(r.hertzFormatted, equals('n/a (no interactions)'));
       expect(r.interactionTimeMs.isNaN, isTrue);
-      expect(r.interactionTimeFormatted, equals('NaN µs'));
+      expect(r.interactionTimeFormatted, equals('n/a (no interactions)'));
+      expect(r.toString(), readable);
+    });
+
+    test('speedRatioFormatted', () {
+      var best = roundOf(1, Duration(milliseconds: 100), 100);
+      var half = roundOf(2, Duration(milliseconds: 200), 100);
+      expect(half.speedRatioFormatted(best), equals('0.5000 (2.0000 x)'));
+      expect(best.speedRatioFormatted(best), equals('1.0000 (1.0000 x)'));
+
+      var tooFast = roundOf(3, Duration.zero, 100);
+      var empty = roundOf(4, Duration(milliseconds: 1), 0);
+      // Either side unmeasurable: `n/a`, not `0.0000 (Infinity x)` or NaN.
+      expect(half.speedRatioFormatted(tooFast), 'n/a (too fast to measure)');
+      expect(tooFast.speedRatioFormatted(best), 'n/a (too fast to measure)');
+      expect(tooFast.speedRatioFormatted(tooFast), 'n/a (too fast to measure)');
+      expect(empty.speedRatioFormatted(best), 'n/a (no interactions)');
+      expect(best.speedRatioFormatted(empty), 'n/a (no interactions)');
     });
 
     test('hertzFormatted at its thresholds', () {
@@ -172,6 +217,11 @@ void main() {
       // 1 interaction in 50000 s: 0.00002 Hz, still above 0.00001.
       var slow = roundOf(1, Duration(seconds: 50000), 1);
       expect(slow.hertzFormatted, equals('0.00002000 Hz'));
+
+      // At or below 0.00001 Hz: the plain `double` text.
+      var slower = roundOf(1, Duration(seconds: 200000), 1);
+      expect(slower.hertz, closeTo(0.000005, 1e-12));
+      expect(slower.hertzFormatted, equals('${slower.hertz} Hz'));
     });
 
     test('interactionTimeFormatted at its thresholds', () {
@@ -210,70 +260,164 @@ void main() {
   });
 
   group('profile boundaries', () {
-    test('zero warmup and zero interactions still run every round', () async {
-      var bench = LifecycleBenchmark('empty');
+    Matcher invalid(String name, Object value) => throwsA(
+      isA<ArgumentError>()
+          .having((e) => e.name, 'name', name)
+          .having((e) => e.invalidValue, 'invalidValue', value),
+    );
 
-      var result = await bench.run(
-        profile: _profile,
-        warmup: 0,
-        interactions: 0,
-      );
-
-      expect(bench.jobs, equals(0));
-      expect(result.rounds.map((r) => r.round), equals([1, 2]));
-      expect(result.rounds.every((r) => r.interactions == 0), isTrue);
-      expect(
-        bench.log,
-        equals([
-          'empty:setup',
-          'empty:teardown',
-          'empty:teardown',
-          'empty:shutdown',
-        ]),
-      );
-    });
-
-    test('negative counts run no jobs', () async {
-      var bench = LifecycleBenchmark('negative');
-
-      var result = await bench.run(
-        profile: _profile,
-        warmup: -5,
-        interactions: -1,
-      );
-
-      expect(bench.jobs, equals(0));
-      expect(result.rounds, hasLength(2));
-      expect(result.rounds.first.interactions, equals(-1));
-    });
-
-    test('zero rounds: setup and shutdown run, no rounds measured', () async {
-      var bench = LifecycleBenchmark('no-rounds');
-
-      var (result, lines) = await capturePrints(
-        () => bench.run(profile: _profile.copyWith(rounds: 0), verbose: true),
-      );
-
-      // Only the warmup runs.
-      expect(bench.jobs, equals(2));
-      expect(result.rounds, isEmpty);
-      expect(bench.log, equals(['no-rounds:setup', 'no-rounds:shutdown']));
-      expect(lines.where((l) => l.startsWith('║ ROUND')), isEmpty);
-      expect(lines.where((l) => l.startsWith('║ BEST ROUND')), isEmpty);
-    });
-
-    // Current behaviour, pinned: a result without rounds has no "best", so
-    // `runAll` fails once every benchmark ran.
-    test('zero rounds: runAll fails comparing the results', () async {
-      var list = [LifecycleBenchmark('a'), LifecycleBenchmark('b')];
-
-      await expectLater(
-        list.runAll(profile: _profile.copyWith(rounds: 0)),
-        throwsStateError,
-      );
-      for (var b in list) {
-        expect(b.log.last, equals('${b.title}:shutdown'));
+    test('validate: the valid minimum and the invalid values', () {
+      // Zero warmup is valid: no warmup.
+      BenchmarkProfile('min', warmup: 0, interactions: 1, rounds: 1).validate();
+      // No upper limit.
+      BenchmarkProfile(
+        'max',
+        warmup: 1 << 62,
+        interactions: 1 << 62,
+        rounds: 1 << 62,
+      ).validate();
+      for (var p in [
+        BenchmarkProfile.instant,
+        BenchmarkProfile.fast,
+        BenchmarkProfile.normal,
+        BenchmarkProfile.heavy,
+      ]) {
+        p.validate();
       }
+
+      expect(
+        () => _profile.copyWith(warmup: -1).validate(),
+        invalid('warmup', -1),
+      );
+      expect(
+        () => _profile.copyWith(interactions: 0).validate(),
+        invalid('interactions', 0),
+      );
+      expect(
+        () => _profile.copyWith(interactions: -3).validate(),
+        invalid('interactions', -3),
+      );
+      expect(
+        () => _profile.copyWith(rounds: 0).validate(),
+        invalid('rounds', 0),
+      );
+      expect(
+        () => _profile.copyWith(rounds: -2).validate(),
+        invalid('rounds', -2),
+      );
+    });
+
+    test('zero warmup runs only the rounds', () async {
+      var bench = LifecycleBenchmark('no-warmup');
+
+      var result = await bench.run(profile: _profile, warmup: 0);
+
+      expect(bench.jobs, equals(2 * 3));
+      expect(result.rounds.map((r) => r.round), equals([1, 2]));
+    });
+
+    for (var (name, value, run) in <(String, int, RunWith)>[
+      ('warmup', -5, (b) => b.run(profile: _profile, warmup: -5)),
+      ('interactions', 0, (b) => b.run(profile: _profile, interactions: 0)),
+      ('interactions', -1, (b) => b.run(profile: _profile, interactions: -1)),
+      ('rounds', 0, (b) => b.run(profile: _profile.copyWith(rounds: 0))),
+      ('rounds', -1, (b) => b.run(profile: _profile.copyWith(rounds: -1))),
+      // Invalid values in the profile itself, not only in the overrides.
+      ('warmup', -1, (b) => b.run(profile: _profile.copyWith(warmup: -1))),
+      (
+        'interactions',
+        0,
+        (b) => b.run(profile: _profile.copyWith(interactions: 0)),
+      ),
+      // The default (normal) profile with an invalid override.
+      ('interactions', 0, (b) => b.run(interactions: 0)),
+    ]) {
+      test('run rejects $name: $value before setup', () async {
+        var bench = LifecycleBenchmark('invalid');
+
+        await expectLater(run(bench), invalid(name, value));
+
+        expect(bench.log, isEmpty);
+        expect(bench.jobs, equals(0));
+      });
+    }
+
+    test('a verbose run with setupOnIsolate rejects invalid counts '
+        'before printing or spawning anything', () async {
+      var (_, lines) = await capturePrints(
+        () => expectLater(
+          LifecycleBenchmark('isolate').run(
+            profile: _profile.copyWith(rounds: 0),
+            setupOnIsolate: true,
+            verbose: true,
+          ),
+          invalid('rounds', 0),
+        ),
+      );
+      expect(lines, isEmpty);
+    });
+
+    test('a valid override fixes an invalid profile value', () async {
+      var bench = LifecycleBenchmark('fixed');
+
+      var result = await bench.run(
+        profile: _profile.copyWith(interactions: 0),
+        interactions: 1,
+      );
+
+      expect(result.rounds.every((r) => r.interactions == 1), isTrue);
+    });
+
+    test('runAll rejects invalid counts before any benchmark runs', () async {
+      for (var (name, value, runAll) in <(String, int, RunAllWith)>[
+        ('rounds', 0, (l) => l.runAll(profile: _profile.copyWith(rounds: 0))),
+        ('warmup', -1, (l) => l.runAll(profile: _profile, warmup: -1)),
+        (
+          'interactions',
+          0,
+          (l) => l.runAll(profile: _profile, interactions: 0),
+        ),
+        ('interactions', -1, (l) => l.runAll(interactions: -1)),
+      ]) {
+        var list = [LifecycleBenchmark('a'), LifecycleBenchmark('b')];
+
+        await expectLater(runAll(list), invalid(name, value));
+        for (var b in list) {
+          expect(b.log, isEmpty, reason: '$name: $value');
+        }
+      }
+
+      // Even with nothing to run.
+      await expectLater(
+        <LifecycleBenchmark>[].runAll(profile: _profile.copyWith(rounds: 0)),
+        invalid('rounds', 0),
+      );
+    });
+
+    test('results without rounds compare after the others', () {
+      var a = LifecycleBenchmark('a');
+      var b = LifecycleBenchmark('b');
+
+      // Runs always measure at least one round: a result without rounds can
+      // only be built by hand. It still compares, without throwing.
+      var empty = BenchmarkResult<int, String, LifecycleBenchmark>(a, []);
+      var measured = BenchmarkResult<int, String, LifecycleBenchmark>(b, [
+        roundOf(1, Duration(milliseconds: 1), 1),
+      ]);
+      expect(empty.compareTo(measured), greaterThan(0));
+      expect(measured.compareTo(empty), lessThan(0));
+      expect(empty.compareTo(empty), equals(0));
+      expect([empty, measured].best, same(measured));
+      expect([measured, empty].best, same(measured));
+      expect(([empty, measured]..sort()).first, same(measured));
+
+      var emptyEntry = MapEntry(a, <BenchmarkRoundResult>[]);
+      var measuredEntry = MapEntry(b, measured.rounds);
+      expect(emptyEntry.best(measuredEntry), same(measuredEntry));
+      expect(measuredEntry.best(emptyEntry), same(measuredEntry));
+
+      expect(<BenchmarkRoundResult>[].bestOrNull, isNull);
+      expect(measured.rounds.bestOrNull, same(measured.rounds.single));
     });
 
     test('a single round prints no BEST ROUND section', () async {
@@ -342,9 +486,7 @@ void main() {
             '║ »» Duration: ${r.rounds.best.duration}',
             '║ »» Speed: ${r.rounds.best.hertzFormatted}',
             '║ »» Interaction Time: ${r.rounds.best.interactionTimeFormatted}',
-            '║ »» Speed ratio: '
-                '${(r.rounds.best.hertz / bestRound.hertz).toStringAsFixed(4)} '
-                '(${(bestRound.hertz / r.rounds.best.hertz).toStringAsFixed(4)} x)',
+            '║ »» Speed ratio: ${r.rounds.best.speedRatioFormatted(bestRound)}',
           ],
           '╚═${'═' * w}══',
           '',
