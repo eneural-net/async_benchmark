@@ -62,25 +62,56 @@ class _BenchmarkOnIsolate<S, O, B extends Benchmark<S, O>>
     Benchmark<S, O> benchmark,
   ) async {
     final receivePort = ReceivePort();
+    final errorPort = ReceivePort();
 
-    var isolate = await Isolate.spawn(_isolateRunSetup, (
-      receivePort.sendPort,
-      benchmark,
-    ), debugName: '${benchmark.runtimeType}[${benchmark.title}]');
+    // Both ports must be closed once the isolate is done: an open
+    // `ReceivePort` keeps the calling isolate (and the process) alive.
+    void closePorts() {
+      receivePort.close();
+      errorPort.close();
+    }
+
+    var isolate = await Isolate.spawn(
+      _isolateRunSetup,
+      (receivePort.sendPort, benchmark),
+      onError: errorPort.sendPort,
+      debugName: '${benchmark.runtimeType}[${benchmark.title}]',
+    );
 
     final startCompleter = Completer<S>();
     final stopCompleter = Completer<void>();
+    // An error after setup is only rethrown if `shutdown` is awaited;
+    // don't report it as unhandled before that.
+    stopCompleter.future.ignore();
 
     SendPort? isolateSendPort;
 
     receivePort.listen((message) {
       if (message == '<stopped>') {
+        closePorts();
         stopCompleter.complete();
         isolate.kill();
       } else if (message is SendPort) {
         isolateSendPort = message;
       } else if (message is S) {
         startCompleter.complete(message);
+      }
+    });
+
+    // Errors thrown by `setup`/`shutdown` on the isolate terminate it: forward
+    // them instead of waiting forever for a message that won't come.
+    // `onError` messages are `[error, stackTrace]`, both as strings.
+    errorPort.listen((message) {
+      final [description, stackTrace] = message as List;
+      final error = RemoteError('$description', '$stackTrace');
+
+      closePorts();
+      isolate.kill(priority: Isolate.immediate);
+
+      if (!startCompleter.isCompleted) {
+        startCompleter.completeError(error, error.stackTrace);
+      } else if (!stopCompleter.isCompleted) {
+        stopCompleter.completeError(error, error.stackTrace);
       }
     });
 
@@ -232,13 +263,15 @@ extension BenchmarkExtension<S, O, B extends Benchmark<S, O>> on B {
     int? warmup,
     int? interactions,
     bool setupOnIsolate = false,
-    verbose = false,
+    Duration? shutdownIsolateDelay,
+    bool verbose = false,
   }) => benchmark(
     this,
     profile: profile,
     warmup: warmup,
     interactions: interactions,
     setupOnIsolate: setupOnIsolate,
+    shutdownIsolateDelay: shutdownIsolateDelay,
     verbose: verbose,
   );
 }
