@@ -36,8 +36,13 @@ class _BenchmarkOnIsolate<S, O, B extends Benchmark<S, O>>
   /// [Isolate] and the benchmark itself.
   @override
   Future<void> shutdown(BenchmarkOnIsolateSetup<S> setup, O? service) async {
-    await benchmark.shutdown(setup.setup, service);
-    await setup.shutdown();
+    try {
+      await benchmark.shutdown(setup.setup, service);
+    } finally {
+      // Stop the isolate even if the caller's `shutdown` throws: a running
+      // isolate keeps the process alive.
+      await setup.shutdown();
+    }
 
     var shutdownIsolateDelay = this.shutdownIsolateDelay;
     if (shutdownIsolateDelay != null) {
@@ -71,30 +76,35 @@ class _BenchmarkOnIsolate<S, O, B extends Benchmark<S, O>>
       errorPort.close();
     }
 
-    var isolate = await Isolate.spawn(
-      _isolateRunSetup,
-      (receivePort.sendPort, benchmark),
-      onError: errorPort.sendPort,
-      debugName: '${benchmark.runtimeType}[${benchmark.title}]',
-    );
+    final Isolate isolate;
+    try {
+      isolate = await Isolate.spawn(
+        _isolateRunSetup,
+        (receivePort.sendPort, benchmark),
+        onError: errorPort.sendPort,
+        debugName: '${benchmark.runtimeType}[${benchmark.title}]',
+      );
+    } catch (_) {
+      // E.g. the benchmark can't be sent to an isolate.
+      closePorts();
+      rethrow;
+    }
 
-    final startCompleter = Completer<S>();
+    // The isolate's `SendPort` and the setup value, sent together so that a
+    // setup value of any type (even a `SendPort`) is recognized.
+    final startCompleter = Completer<(SendPort, S)>();
     final stopCompleter = Completer<void>();
     // An error after setup is only rethrown if `shutdown` is awaited;
     // don't report it as unhandled before that.
     stopCompleter.future.ignore();
-
-    SendPort? isolateSendPort;
 
     receivePort.listen((message) {
       if (message == '<stopped>') {
         closePorts();
         stopCompleter.complete();
         isolate.kill();
-      } else if (message is SendPort) {
-        isolateSendPort = message;
-      } else if (message is S) {
-        startCompleter.complete(message);
+      } else if (message is (SendPort, Object?)) {
+        startCompleter.complete((message.$1, message.$2 as S));
       }
     });
 
@@ -115,13 +125,11 @@ class _BenchmarkOnIsolate<S, O, B extends Benchmark<S, O>>
       }
     });
 
-    var setup = await startCompleter.future;
+    var (isolateSendPort, setup) = await startCompleter.future;
 
     Future<void> shutdown() async {
-      if (isolateSendPort != null) {
-        isolateSendPort!.send('shutdown');
-        await stopCompleter.future;
-      }
+      isolateSendPort.send('shutdown');
+      await stopCompleter.future;
     }
 
     return (setup: setup, shutdown: shutdown);
@@ -132,12 +140,10 @@ class _BenchmarkOnIsolate<S, O, B extends Benchmark<S, O>>
     final sendPort = args.$1;
     final benchmark = args.$2;
 
-    final receivePort = ReceivePort();
-
-    sendPort.send(receivePort.sendPort);
-
     var s = await benchmark.setup();
-    sendPort.send(s.setup);
+
+    final receivePort = ReceivePort();
+    sendPort.send((receivePort.sendPort, s.setup));
 
     final shutdownCompleter = Completer<void>();
 
@@ -540,6 +546,10 @@ extension BenchmarkRoundResultExtension on Iterable<BenchmarkRoundResult> {
 ///
 /// Returns a [BenchmarkResult] containing the benchmark performance metrics
 /// (e.g., duration, interaction time) for each round.
+///
+/// If a [Benchmark.job] or [Benchmark.teardown] throws, [Benchmark.shutdown]
+/// is still called (and any error it throws ignored) before the original
+/// error is rethrown.
 Future<BenchmarkResult<S, O, B>> benchmark<S, O, B extends Benchmark<S, O>>(
   B benchmark, {
   BenchmarkProfile? profile,
@@ -627,6 +637,55 @@ _benchmarkImpl<S, O, B extends Benchmark<S, O>>(
   final setup = s.setup;
   final service = s.service;
 
+  final List<BenchmarkRoundResult> roundsResults;
+  try {
+    roundsResults = await _benchmarkRounds(
+      benchmark,
+      setup,
+      service,
+      warmup: warmup,
+      interactions: interactions,
+      rounds: rounds,
+      line: line,
+      verbose: verbose,
+    );
+  } catch (_) {
+    // A failing `job` or `teardown` still releases the benchmark's resources
+    // (and stops the setup isolate, which would keep the process alive).
+    // The original error is the one reported.
+    try {
+      await benchmark.shutdown(setup, service);
+    } catch (_) {}
+    rethrow;
+  }
+
+  if (verbose) {
+    print(line);
+    print('║ Shutdown...');
+  }
+
+  await benchmark.shutdown(setup, service);
+
+  if (verbose) {
+    print('╚═${'═' * title.length}══');
+    print('');
+  }
+
+  return BenchmarkResult(benchmark, roundsResults);
+}
+
+/// Runs the warmup and the rounds of [_benchmarkImpl] (after `setup`, before
+/// `shutdown`).
+Future<List<BenchmarkRoundResult>> _benchmarkRounds<S, O>(
+  Benchmark<S, O> benchmark,
+  S setup,
+  O? service, {
+  required int warmup,
+  required int interactions,
+  required int rounds,
+  required String line,
+  required bool verbose,
+}) async {
   await Future.delayed(Duration(milliseconds: 10));
 
   if (verbose) {
@@ -694,17 +753,5 @@ _benchmarkImpl<S, O, B extends Benchmark<S, O>>(
     }
   }
 
-  if (verbose) {
-    print(line);
-    print('║ Shutdown...');
-  }
-
-  await benchmark.shutdown(setup, service);
-
-  if (verbose) {
-    print('╚═${'═' * title.length}══');
-    print('');
-  }
-
-  return BenchmarkResult(benchmark, roundsResults);
+  return roundsResults;
 }

@@ -1,3 +1,32 @@
+## 1.1.1
+
+- `benchmark` / `BenchmarkExtension.run` / `IterableBenchmarkExtension.runAll`:
+  - Fixed: when a `job` or `teardown` throws, the benchmark's `shutdown` is
+    now called before the error is rethrown, so its resources are released.
+    With `setupOnIsolate: true` the setup `Isolate` was left running and the
+    program never exited. The original error is the one reported, even if
+    `shutdown` also throws.
+
+- `_BenchmarkOnIsolate`:
+  - Fixed: the setup `Isolate` is stopped even if the caller's `shutdown`
+    throws (the program never exited).
+  - Fixed: a benchmark that can't be sent to an `Isolate` now fails with the
+    `Isolate.spawn` error without leaving its `ReceivePort`s open (the
+    program never exited).
+  - Fixed: a setup value that is a `SendPort` (e.g. to reach a service living
+    on the setup `Isolate`) was mistaken for the isolate's own port, and the
+    benchmark hung forever. The port and the setup value are now sent
+    together.
+
+- Tests:
+  - Edge values of `BenchmarkRoundResult` (zero interactions, zero duration,
+    formatting thresholds) and of profiles (zero/negative counts, zero rounds).
+  - The verbose reports of `run` and `runAll` asserted line by line.
+  - Seeded shuffles, errors in the middle of a run, concurrent runs, and
+    `setupOnIsolate` with a service holding a port on the `Isolate`.
+  - Integration: an end-to-end verbose `runAll` and the error paths of
+    `setupOnIsolate` run as separate processes, which must exit on their own.
+
 ## 1.1.0
 
 - `_BenchmarkOnIsolate`:
