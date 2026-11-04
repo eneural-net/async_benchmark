@@ -5,7 +5,7 @@ import 'dart:math' as math;
 /// Type for setup value and shutting down benchmarks service on an [Isolate].
 typedef BenchmarkOnIsolateSetup<S> = ({
   S setup,
-  Future<void> Function() shutdown
+  Future<void> Function() shutdown,
 });
 
 /// A class that runs benchmarks on an [Isolate], extending the [Benchmark] class.
@@ -22,7 +22,7 @@ class _BenchmarkOnIsolate<S, O, B extends Benchmark<S, O>>
   final Duration? shutdownIsolateDelay;
 
   _BenchmarkOnIsolate(this.benchmark, {this.shutdownIsolateDelay})
-      : super(benchmark.title);
+    : super(benchmark.title);
 
   /// Sets up the benchmark on the [Isolate], returning a [BenchmarkSetupResult]
   /// containing setup data and service information.
@@ -59,28 +59,59 @@ class _BenchmarkOnIsolate<S, O, B extends Benchmark<S, O>>
   /// Runs the setup of the benchmark on a separate [Isolate].
   /// Returns a [BenchmarkOnIsolateSetup] containing setup data and shutdown function.
   static Future<BenchmarkOnIsolateSetup<S>> _runSetupOnIsolate<S, O>(
-      Benchmark<S, O> benchmark) async {
+    Benchmark<S, O> benchmark,
+  ) async {
     final receivePort = ReceivePort();
+    final errorPort = ReceivePort();
+
+    // Both ports must be closed once the isolate is done: an open
+    // `ReceivePort` keeps the calling isolate (and the process) alive.
+    void closePorts() {
+      receivePort.close();
+      errorPort.close();
+    }
 
     var isolate = await Isolate.spawn(
       _isolateRunSetup,
       (receivePort.sendPort, benchmark),
+      onError: errorPort.sendPort,
       debugName: '${benchmark.runtimeType}[${benchmark.title}]',
     );
 
     final startCompleter = Completer<S>();
     final stopCompleter = Completer<void>();
+    // An error after setup is only rethrown if `shutdown` is awaited;
+    // don't report it as unhandled before that.
+    stopCompleter.future.ignore();
 
     SendPort? isolateSendPort;
 
     receivePort.listen((message) {
       if (message == '<stopped>') {
+        closePorts();
         stopCompleter.complete();
         isolate.kill();
       } else if (message is SendPort) {
         isolateSendPort = message;
       } else if (message is S) {
         startCompleter.complete(message);
+      }
+    });
+
+    // Errors thrown by `setup`/`shutdown` on the isolate terminate it: forward
+    // them instead of waiting forever for a message that won't come.
+    // `onError` messages are `[error, stackTrace]`, both as strings.
+    errorPort.listen((message) {
+      final [description, stackTrace] = message as List;
+      final error = RemoteError('$description', '$stackTrace');
+
+      closePorts();
+      isolate.kill(priority: Isolate.immediate);
+
+      if (!startCompleter.isCompleted) {
+        startCompleter.completeError(error, error.stackTrace);
+      } else if (!stopCompleter.isCompleted) {
+        stopCompleter.completeError(error, error.stackTrace);
       }
     });
 
@@ -127,20 +158,36 @@ class _BenchmarkOnIsolate<S, O, B extends Benchmark<S, O>>
 class BenchmarkProfile {
   /// A pre-defined benchmarking profile for instant/quick performance tests
   /// to ensure the benchmark runs successfully.
-  static final instant =
-      const BenchmarkProfile('instant', warmup: 1, interactions: 1, rounds: 1);
+  static final instant = const BenchmarkProfile(
+    'instant',
+    warmup: 1,
+    interactions: 1,
+    rounds: 1,
+  );
 
   /// A pre-defined benchmarking profile for fast performance tests.
-  static final fast =
-      const BenchmarkProfile('fast', warmup: 10, interactions: 100, rounds: 1);
+  static final fast = const BenchmarkProfile(
+    'fast',
+    warmup: 10,
+    interactions: 100,
+    rounds: 1,
+  );
 
   /// A pre-defined benchmarking profile for normal performance tests.
-  static final normal = const BenchmarkProfile('normal',
-      warmup: 100, interactions: 1000, rounds: 3);
+  static final normal = const BenchmarkProfile(
+    'normal',
+    warmup: 100,
+    interactions: 1000,
+    rounds: 3,
+  );
 
   /// A pre-defined benchmarking profile for heavy performance tests.
-  static final heavy = const BenchmarkProfile('heavy',
-      warmup: 1000, interactions: 10000, rounds: 10);
+  static final heavy = const BenchmarkProfile(
+    'heavy',
+    warmup: 1000,
+    interactions: 10000,
+    rounds: 10,
+  );
 
   /// The name of the benchmark profile.
   final String name;
@@ -155,16 +202,25 @@ class BenchmarkProfile {
   final int rounds;
 
   /// Constructs a custom [BenchmarkProfile].
-  const BenchmarkProfile(this.name,
-      {required this.warmup, required this.interactions, required this.rounds});
+  const BenchmarkProfile(
+    this.name, {
+    required this.warmup,
+    required this.interactions,
+    required this.rounds,
+  });
 
   /// Creates a copy of the current `BenchmarkProfile` instance with updated values.
-  BenchmarkProfile copyWith(
-          {String? name, int? warmup, int? interactions, int? rounds}) =>
-      BenchmarkProfile(name ?? this.name,
-          warmup: warmup ?? this.warmup,
-          interactions: interactions ?? this.interactions,
-          rounds: rounds ?? this.rounds);
+  BenchmarkProfile copyWith({
+    String? name,
+    int? warmup,
+    int? interactions,
+    int? rounds,
+  }) => BenchmarkProfile(
+    name ?? this.name,
+    warmup: warmup ?? this.warmup,
+    interactions: interactions ?? this.interactions,
+    rounds: rounds ?? this.rounds,
+  );
 
   @override
   String toString() =>
@@ -207,14 +263,17 @@ extension BenchmarkExtension<S, O, B extends Benchmark<S, O>> on B {
     int? warmup,
     int? interactions,
     bool setupOnIsolate = false,
-    verbose = false,
-  }) =>
-      benchmark(this,
-          profile: profile,
-          warmup: warmup,
-          interactions: interactions,
-          setupOnIsolate: setupOnIsolate,
-          verbose: verbose);
+    Duration? shutdownIsolateDelay,
+    bool verbose = false,
+  }) => benchmark(
+    this,
+    profile: profile,
+    warmup: warmup,
+    interactions: interactions,
+    setupOnIsolate: setupOnIsolate,
+    shutdownIsolateDelay: shutdownIsolateDelay,
+    verbose: verbose,
+  );
 }
 
 extension IterableBenchmarkExtension<S, O, B extends Benchmark<S, O>>
@@ -244,13 +303,15 @@ extension IterableBenchmarkExtension<S, O, B extends Benchmark<S, O>>
     }
 
     for (var b in benchmarks) {
-      var r = await benchmark<S, O, B>(b,
-          profile: profile,
-          warmup: warmup,
-          interactions: interactions,
-          setupOnIsolate: setupOnIsolate,
-          shutdownIsolateDelay: shutdownIsolateDelay,
-          verbose: verbose);
+      var r = await benchmark<S, O, B>(
+        b,
+        profile: profile,
+        warmup: warmup,
+        interactions: interactions,
+        setupOnIsolate: setupOnIsolate,
+        shutdownIsolateDelay: shutdownIsolateDelay,
+        verbose: verbose,
+      );
 
       results.add(r);
 
@@ -268,7 +329,8 @@ extension IterableBenchmarkExtension<S, O, B extends Benchmark<S, O>>
       if (verbose) {
         print('╔═${'═' * bestBench.title.length}══');
         print(
-            '║ BEST BENCHMARK: ${bestBench.title} (round: ${bestRound.round})');
+          '║ BEST BENCHMARK: ${bestBench.title} (round: ${bestRound.round})',
+        );
         print('║');
         print('║ »» Duration: ${bestRound.duration}');
         print('║ »» Speed: ${bestRound.hertzFormatted}');
@@ -297,7 +359,8 @@ extension IterableBenchmarkExtension<S, O, B extends Benchmark<S, O>>
             print('║ »» Speed: ${best.hertzFormatted}');
             print('║ »» Interaction Time: ${best.interactionTimeFormatted}');
             print(
-                '║ »» Speed ratio: ${ratio.toStringAsFixed(4)} (${(1 / ratio).toStringAsFixed(4)} x)');
+              '║ »» Speed ratio: ${ratio.toStringAsFixed(4)} (${(1 / ratio).toStringAsFixed(4)} x)',
+            );
           }
         }
       }
@@ -316,7 +379,8 @@ extension MapEntryBenchmarkResultsExtension<S, O, B extends Benchmark<S, O>>
     on MapEntry<B, List<BenchmarkRoundResult>> {
   /// Returns the entry with the best performance (higher Hertz value).
   MapEntry<B, List<BenchmarkRoundResult>> best(
-      MapEntry<B, List<BenchmarkRoundResult>> other) {
+    MapEntry<B, List<BenchmarkRoundResult>> other,
+  ) {
     var b1 = value.best;
     var b2 = other.value.best;
 
@@ -357,8 +421,13 @@ class BenchmarkResult<S, O, B extends Benchmark<S, O>>
       'BenchmarkResult{benchmark: $benchmark, rounds: ${rounds.length}}';
 }
 
-extension IterableBenchmarkResultExtension<S, O, B extends Benchmark<S, O>,
-    R extends BenchmarkResult<S, O, B>> on Iterable<R> {
+extension IterableBenchmarkResultExtension<
+  S,
+  O,
+  B extends Benchmark<S, O>,
+  R extends BenchmarkResult<S, O, B>
+>
+    on Iterable<R> {
   R get best => reduce((a, b) => a.best(b) as R);
 }
 
@@ -388,7 +457,11 @@ class BenchmarkRoundResult implements Comparable<BenchmarkRoundResult> {
       (duration.inMicroseconds / interactions) / 1000;
 
   BenchmarkRoundResult(
-      this.round, this.initTime, this.endTime, this.interactions);
+    this.round,
+    this.initTime,
+    this.endTime,
+    this.interactions,
+  );
 
   /// A formatted string representing the [hertz] value.
   String get hertzFormatted {
@@ -478,8 +551,10 @@ Future<BenchmarkResult<S, O, B>> benchmark<S, O, B extends Benchmark<S, O>>(
 }) async {
   if (setupOnIsolate) {
     var result = await _benchmarkImpl(
-      _BenchmarkOnIsolate<S, O, B>(benchmark,
-          shutdownIsolateDelay: shutdownIsolateDelay),
+      _BenchmarkOnIsolate<S, O, B>(
+        benchmark,
+        shutdownIsolateDelay: shutdownIsolateDelay,
+      ),
       profile: profile,
       warmup: warmup,
       interactions: interactions,
@@ -499,7 +574,7 @@ Future<BenchmarkResult<S, O, B>> benchmark<S, O, B extends Benchmark<S, O>>(
 }
 
 Future<BenchmarkResult<S, O, B>>
-    _benchmarkImpl<S, O, B extends Benchmark<S, O>>(
+_benchmarkImpl<S, O, B extends Benchmark<S, O>>(
   B benchmark, {
   BenchmarkProfile? profile,
   int? warmup,

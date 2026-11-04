@@ -3,14 +3,14 @@ import 'dart:async';
 import 'package:async_benchmark/async_benchmark.dart';
 
 void main() async {
-  var benchmarks = [
-    BenchmarkAsync1(),
-    BenchmarkAsync2(),
-    BenchmarkFutureOr(),
-  ];
+  var benchmarks = [BenchmarkAsync1(), BenchmarkAsync2(), BenchmarkFutureOr()];
 
-  var profile = BenchmarkProfile('custom',
-      warmup: 1000000, interactions: 20000000, rounds: 3);
+  var profile = BenchmarkProfile(
+    'custom',
+    warmup: 1000000,
+    interactions: 20000000,
+    rounds: 3,
+  );
 
   await benchmarks.runAll(profile: profile, shuffle: true, verbose: true);
 }

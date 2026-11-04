@@ -3,8 +3,12 @@ import 'dart:math';
 import 'package:async_benchmark/async_benchmark.dart';
 
 void main() async {
-  final profile =
-      BenchmarkProfile('custom', warmup: 10, interactions: 100, rounds: 3);
+  final profile = BenchmarkProfile(
+    'custom',
+    warmup: 10,
+    interactions: 100,
+    rounds: 3,
+  );
 
   await BenchmarkPrime(seed: 12345).run(profile: profile, verbose: true);
 }

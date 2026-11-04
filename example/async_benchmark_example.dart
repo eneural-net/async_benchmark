@@ -4,8 +4,12 @@ import 'dart:math';
 import 'package:async_benchmark/async_benchmark.dart';
 
 void main() async {
-  final profile =
-      BenchmarkProfile('custom', warmup: 10, interactions: 100, rounds: 3);
+  final profile = BenchmarkProfile(
+    'custom',
+    warmup: 10,
+    interactions: 100,
+    rounds: 3,
+  );
 
   final seed = 123;
 
@@ -21,7 +25,7 @@ class BenchmarkPrimeCached extends Benchmark<int, PrimeCached> {
   final int? seed;
 
   BenchmarkPrimeCached({this.seed})
-      : super('PrimeCounterCached(seed: ${seed ?? '*'})');
+    : super('PrimeCounterCached(seed: ${seed ?? '*'})');
 
   static final Pool<PrimeCached> _primePool = Pool(() => PrimeCached());
 
