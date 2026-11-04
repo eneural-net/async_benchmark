@@ -546,6 +546,10 @@ extension BenchmarkRoundResultExtension on Iterable<BenchmarkRoundResult> {
 ///
 /// Returns a [BenchmarkResult] containing the benchmark performance metrics
 /// (e.g., duration, interaction time) for each round.
+///
+/// If a [Benchmark.job] or [Benchmark.teardown] throws, [Benchmark.shutdown]
+/// is still called (and any error it throws ignored) before the original
+/// error is rethrown.
 Future<BenchmarkResult<S, O, B>> benchmark<S, O, B extends Benchmark<S, O>>(
   B benchmark, {
   BenchmarkProfile? profile,
